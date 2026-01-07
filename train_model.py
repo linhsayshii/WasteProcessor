@@ -13,8 +13,9 @@ def train_model():
     DATA_DIR = './dataset'
     SAVE_PATH = 'waste_classifier.pth'
     NUM_EPOCHS = 15
-    BATCH_SIZE = 64
-    NUM_WORKERS = 4
+    BATCH_SIZE = 32
+    NUM_WORKERS = 3
+    LEARNING_RATE = 0.0001
 
     # 1. Setup GPU engine
     if torch.backends.mps.is_available():
@@ -24,11 +25,13 @@ def train_model():
     else:
         device = torch.device("cpu")
 
-    # 2. Xử lý ảnh (Augmentation nhẹ để tránh Overfitting)
+    # 2. Xử lý ảnh (Augmentation)
     data_transforms = {
         'train': transforms.Compose([
             transforms.Resize((224, 224)),
             transforms.RandomHorizontalFlip(),
+            transforms.RandomRotation(15),
+            transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2), 
             transforms.ToTensor(),
             transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
         ]),
@@ -42,7 +45,6 @@ def train_model():
     image_datasets = {x: datasets.ImageFolder(os.path.join(DATA_DIR, x), data_transforms[x]) 
                       for x in ['train', 'test']}
     
-    # num_workers=2 để CPU load ảnh song song với việc GPU train
     dataloaders = {x: DataLoader(image_datasets[x], batch_size=BATCH_SIZE, 
                                  shuffle=True, num_workers=NUM_WORKERS) 
                    for x in ['train', 'test']}
@@ -51,43 +53,40 @@ def train_model():
     class_names = image_datasets['train'].classes
     
     print(f"📂 Đã load xong: {dataset_sizes['train']} ảnh train | {dataset_sizes['test']} ảnh test")
-    print(f"🏷️ Labels: {class_names}") # Sẽ in ra ['non_recyclable', 'recyclable']
+    print(f"🏷️ Labels: {class_names}")
 
-    # 3. Load Model ResNet18
-    model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+    # 3. Load Model ResNet50
+    model = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
     
+    # --- QUAN TRỌNG: MỞ KHÓA NÃO (UNFREEZE) ---
     for param in model.parameters():
-        param.requires_grad = False
+        param.requires_grad = True 
 
     num_ftrs = model.fc.in_features
     model.fc = nn.Linear(num_ftrs, len(class_names))
     model = model.to(device)
 
+    # Dùng Adam với Learning Rate thấp
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.fc.parameters(), lr=0.001, momentum=0.9)
 
-    # 4. Training Loop (Có lưu Best Model)
-    since = time.time()
-    best_model_wts = copy.deepcopy(model.state_dict())
+    # 5. Training Loop
     best_acc = 0.0
+    best_model_wts = copy.deepcopy(model.state_dict())
 
-    print("\n🏁 BẮT ĐẦU RACE!")
+    print("\n🔥 BẮT ĐẦU TRAIN...")
     for epoch in range(NUM_EPOCHS):
-        print(f'\nEpoch {epoch+1}/{NUM_EPOCHS}')
-        print('-' * 10)
+        print(f'Epoch {epoch+1}/{NUM_EPOCHS}')
 
         for phase in ['train', 'test']:
-            if phase == 'train':
-                model.train()
-            else:
-                model.eval()
+            if phase == 'train': model.train()
+            else: model.eval()
 
             running_loss = 0.0
             running_corrects = 0
-
-            # Sử dụng tqdm để hiện thanh loading
-            pbar = tqdm(dataloaders[phase], unit="batch")
             
+            pbar = tqdm(dataloaders[phase], unit="batch", leave=False)
+
             for inputs, labels in pbar:
                 inputs = inputs.to(device)
                 labels = labels.to(device)
@@ -106,7 +105,6 @@ def train_model():
                 running_loss += loss.item() * inputs.size(0)
                 running_corrects += torch.sum(preds == labels.data)
                 
-                # Update thanh loading
                 pbar.set_description(f"{phase} Loss: {loss.item():.4f}")
 
             epoch_loss = running_loss / dataset_sizes[phase]
@@ -114,17 +112,15 @@ def train_model():
 
             print(f'   👉 {phase} Accuracy: {epoch_acc:.4f}')
 
-            # Deep Copy model nếu nó tốt hơn các vòng trước
+            # Lưu model tốt nhất (kiểm tra trên tập test)
             if phase == 'test' and epoch_acc > best_acc:
                 best_acc = epoch_acc
                 best_model_wts = copy.deepcopy(model.state_dict())
-                print("   🌟 (New Best Model Found!)")
+                print("      🌟 Kỷ lục mới! Đã lưu tạm.")
 
-    time_elapsed = time.time() - since
-    print(f'\n✨ Train hoàn tất trong {time_elapsed // 60:.0f}m {time_elapsed % 60:.0f}s')
-    print(f'🏆 Best Val Acc: {best_acc:.4f}')
-
-    # Load lại weight tốt nhất và lưu
+    print(f'\n🏆 Kết quả cuối cùng: {best_acc:.4f}')
+    
+    # Save Final Model
     model.load_state_dict(best_model_wts)
     torch.save({
         'model_state': model.state_dict(),
@@ -132,5 +128,5 @@ def train_model():
     }, SAVE_PATH)
     print(f"💾 Đã lưu model tại: {SAVE_PATH}")
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     train_model()
