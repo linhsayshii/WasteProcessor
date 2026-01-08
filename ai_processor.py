@@ -3,47 +3,47 @@ from torchvision import models, transforms
 from PIL import Image
 import os
 
-# --- CLASS 1: AI MODEL (Bộ não nhận diện hình ảnh) ---
+# --- CLASS 1: AI MODEL (Đã nâng cấp lên ResNet50) ---
 class AIModel:
-    def __init__(self, model_path='waste_classifier.pth'):
-        # 1. Tự động nhận diện thiết bị (Quan trọng cho Mac M2)
+    def __init__(self, model_path='waste_classifier_pro.pth'):
+        # 1. Tự động nhận diện thiết bị
         if torch.backends.mps.is_available():
             self.device = torch.device("mps")
-            print("🚀 AI Processor: Đang chạy trên Apple M2 GPU (MPS)")
         elif torch.cuda.is_available():
             self.device = torch.device("cuda")
         else:
             self.device = torch.device("cpu")
-            print("⚠️ AI Processor: Đang chạy trên CPU (Chậm)")
             
         self.loaded = False
         
         # 2. Load Model
         if os.path.exists(model_path):
             try:
-                # Mẹo: Load vào CPU trước để tránh lỗi bộ nhớ, sau đó mới đẩy sang GPU
+                # Load thông tin saved
+                # map_location='cpu' để an toàn, sau đó mới đẩy vào GPU
                 checkpoint = torch.load(model_path, map_location=torch.device('cpu'))
                 self.class_names = checkpoint['class_names']
                 
-                # Khởi tạo kiến trúc ResNet18
-                self.model = models.resnet18(weights=None)
-                # Sửa đầu ra cho khớp số lượng class (9 loại)
-                num_ftrs = self.model.fc.in_features
+                # --- SỬA Ở ĐÂY: Đổi resnet18 thành resnet50 ---
+                self.model = models.resnet50(weights=None)
+                
+                # Tự động lấy số lượng đầu vào của lớp cuối cùng (ResNet50 là 2048)
+                num_ftrs = self.model.fc.in_features 
                 self.model.fc = torch.nn.Linear(num_ftrs, len(self.class_names))
                 
                 # Nạp trọng số (Weights)
                 self.model.load_state_dict(checkpoint['model_state'])
                 
-                # Đẩy model sang thiết bị xử lý (GPU/MPS)
+                # Đẩy model sang thiết bị xử lý
                 self.model.to(self.device)
                 self.model.eval() # Chế độ dự đoán
                 
                 self.loaded = True
-                print(f"✅ Đã load model thành công! Nhận diện được: {len(self.class_names)} loại.")
+                print(f"✅ Đã load thành công! Nhận diện được: {len(self.class_names)} loại.")
             except Exception as e:
                 print(f"❌ Lỗi khi load model: {e}")
         else:
-            print(f"⚠️ Cảnh báo: Không tìm thấy file '{model_path}'. Hãy kiểm tra lại tên file!")
+            print(f"⚠️ Cảnh báo: Không tìm thấy file '{model_path}'.")
 
         # 3. Bộ xử lý ảnh (Giống hệt lúc train)
         self.preprocess = transforms.Compose([
@@ -58,7 +58,7 @@ class AIModel:
         Output: Tên nhãn (Tiếng Anh), Độ tin cậy (0.0 - 1.0)
         """
         if not self.loaded:
-            return "Error", 0.0
+            return "Error: Model not loaded", 0.0
 
         # Chuyển ảnh sang Tensor và đẩy vào GPU M2
         img_tensor = self.preprocess(image).unsqueeze(0).to(self.device)
@@ -74,61 +74,22 @@ class AIModel:
         
         return label_en, confidence
 
-# --- CLASS 2: WASTE EXPERT (Chuyên gia tư vấn rác - Rút gọn) ---
+# --- CLASS 2: WASTE EXPERT ---
 class WasteExpert:
     def __init__(self):
-        # Cấu hình kiến thức (Chỉ giữ lại Name và Type theo yêu cầu của bạn)
         self.knowledge_base = {
-            "automobile wastes": {
-                "vn_name": "Phụ tùng Ô tô / Xe máy",
-                "type": "Rác Công Nghiệp"
-            },
-            "battery waste": {
-                "vn_name": "Pin / Ắc quy cũ",
-                "type": "Rác Nguy Hại (Hazardous)"
-            },
-            "E-waste": {
-                "vn_name": "Rác thải Điện tử (Linh kiện)",
-                "type": "Rác Điện Tử"
-            },
-            "glass waste": {
-                "vn_name": "Thủy tinh (Chai/Lọ/Kính)",
-                "type": "Rác Tái Chế"
-            },
-            "light bulbs": {
-                "vn_name": "Bóng đèn (Huỳnh quang/Sợi đốt)",
-                "type": "Rác Nguy Hại"
-            },
-            "metal waste": {
-                "vn_name": "Kim loại (Vỏ lon/Sắt vụn)",
-                "type": "Rác Tái Chế"
-            },
-            "organic waste": {
-                "vn_name": "Rác Hữu cơ (Thức ăn/Rau củ)",
-                "type": "Rác Hữu Cơ"
-            },
-            "paper waste": {
-                "vn_name": "Giấy / Bìa Carton",
-                "type": "Rác Tái Chế"
-            },
-            "plastic waste": {
-                "vn_name": "Nhựa (Chai/Lọ/Túi)",
-                "type": "Rác Tái Chế"
-            },
-            "unknown": {
-                "vn_name": "Chưa xác định",
-                "type": "N/A"
-            }
+            "automobile wastes": {"vn_name": "Phụ tùng Ô tô / Xe máy", "type": "Rác Công Nghiệp"},
+            "battery waste": {"vn_name": "Pin / Ắc quy cũ", "type": "Rác Nguy Hại (Hazardous)"},
+            "E-waste": {"vn_name": "Rác thải Điện tử", "type": "Rác Điện Tử"},
+            "glass waste": {"vn_name": "Thủy tinh (Chai/Lọ)", "type": "Rác Tái Chế"},
+            "light bulbs": {"vn_name": "Bóng đèn vỡ/hỏng", "type": "Rác Nguy Hại"},
+            "metal waste": {"vn_name": "Kim loại (Vỏ lon/Sắt)", "type": "Rác Tái Chế"},
+            "organic waste": {"vn_name": "Rác Hữu cơ (Thức ăn)", "type": "Rác Hữu Cơ"},
+            "paper waste": {"vn_name": "Giấy / Bìa Carton", "type": "Rác Tái Chế"},
+            "plastic waste": {"vn_name": "Nhựa (Chai/Lọ/Túi)", "type": "Rác Tái Chế"},
+            "unknown": {"vn_name": "Chưa xác định", "type": "N/A"}
         }
 
     def consult(self, label_en):
-        """
-        Nhận vào tên tiếng Anh (từ AI), trả về thông tin rút gọn.
-        """
-        # Lấy thông tin, nếu không có key thì trả về 'unknown'
         info = self.knowledge_base.get(label_en, self.knowledge_base["unknown"])
-        
-        return {
-            "name": info['vn_name'],
-            "type": info['type']
-        }
+        return {"name": info['vn_name'], "type": info['type']}
